@@ -77,14 +77,22 @@ var (
 )
 
 var (
+	// UpfAdapterIp is the adapter's N4 address in its Node ID's family; AdapterN4 has both.
 	UpfAdapterIp       net.IP
 	UpfServerStartTime time.Time
 )
 
 func init() {
-	podIpStr := os.Getenv("POD_IP")
-	podIp := net.ParseIP(podIpStr)
-	UpfAdapterIp = podIp.To4()
+	local, family, err := resolveLocalN4(os.Getenv("POD_IP"), os.Getenv("POD_IPS"),
+		os.Getenv("UPFADAPTER_NODE_ID"), os.Getenv("UPFADAPTER_PREFERRED_FAMILY"))
+	if err != nil {
+		logger.CfgLog.Errorf("adapter N4 address: %v", err)
+	}
+	AdapterN4 = local
+	UpfAdapterIp = local.primaryIP()
+	types.SetPreferredFamily(family)
+	logger.CfgLog.Infof("adapter Node ID [%s], N4 addresses IPv4 [%v] IPv6 [%v], UPF names resolve %s first",
+		local.NodeID.ValueString(), local.IPv4, local.IPv6, types.PreferredFamily())
 
 	UpfCfg = Config{
 		UPFs: make(map[string]*UPNode),
@@ -120,9 +128,12 @@ func GetUpfFromNodeId(nodeId *types.NodeID) *UPNode {
 	logger.CfgLog.Debugf("content of upf config [%v] ", UpfCfg.UPFs)
 
 	for _, upf := range UpfCfg.UPFs {
-		if nodeId.NodeIdType == types.NodeIdTypeIpv4Address {
-			if bytes.Equal(upf.ANIP.To4(), nodeId.NodeIdValue) {
-				logger.CfgLog.Debugf("getting upf from node id, ip-addr [%v, %v] successful", nodeId, upf.ANIP.To4())
+		// An IP Node ID, of either family, is matched against the address the UPF was
+		// recorded at. Only IPv4 was compared, so a UPF that identified itself by an IPv6
+		// address was never found, and its association never became active.
+		if nodeId.NodeIdType == types.NodeIdTypeIpv4Address || nodeId.NodeIdType == types.NodeIdTypeIpv6Address {
+			if upf.ANIP != nil && upf.ANIP.Equal(net.IP(nodeId.NodeIdValue)) {
+				logger.CfgLog.Debugf("getting upf from node id, ip-addr [%v, %v] successful", nodeId, upf.ANIP)
 				return upf
 			}
 		} else if nodeId.NodeIdType == types.NodeIdTypeFqdn &&
@@ -382,7 +393,7 @@ func RecordUpfAddr(nodeId *types.NodeID) {
 	expireUpfAddrsLocked(now)
 
 	if ip == nil || ip.IsUnspecified() {
-		// An FQDN that does not resolve yields IPv4zero, and there is no address to
+		// An FQDN that does not resolve yields nil (IPv4zero before), and there is no address to
 		// authorise. The identity stays named, because a name that fails to resolve for a
 		// moment is not a user plane that has gone: revoking here would stop relaying for a
 		// node that is merely waiting on DNS. What the record buys is the other case -- a
