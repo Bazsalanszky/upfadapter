@@ -124,7 +124,7 @@ func init() {
 	// cannot have its answer thrown away by a release decided before it existed.
 	config.OnUpfAddrReleased(ForgetConsumer)
 
-	CPNodeID = &types.NodeID{NodeIdType: uint8(0), NodeIdValue: []byte(config.UpfAdapterIp)}
+	CPNodeID = &config.AdapterN4.NodeID
 }
 
 // ForgetConsumer drops the transaction table held for a peer.
@@ -284,7 +284,12 @@ func readPfcpMessage() (message.Message, *net.UDPAddr, error) {
 			return msg, addr, nil
 		}
 	} else if IsResponse(msg) {
-		tx, err := findTransaction(msg, Server.Addr)
+		// The socket's own address, under which NewTransaction stored the request. Server.Addr
+		// is the address asked for, which differs for a wildcard bind ("0.0.0.0:8805" or
+		// ":8805" against "[::]:8805"), so a response to an adapter bound to the wildcard --
+		// any adapter without an IPv4 POD_IP -- found no transaction and was dropped.
+		local, _ := Server.Conn.LocalAddr().(*net.UDPAddr)
+		tx, err := findTransaction(msg, local)
 		if err != nil {
 			return msg, addr, err
 		}
@@ -339,10 +344,9 @@ func findTransaction(msg message.Message, addr *net.UDPAddr) (*Transaction, erro
 // until ctx is cancelled. It returns once the socket is closed and the read
 // loop has stopped, or at once if the socket cannot be opened.
 func Run(ctx context.Context, Dispatch func(message.Message, *net.UDPAddr)) {
-	addr := &net.UDPAddr{
-		IP:   net.ParseIP(CPNodeID.ResolveNodeIdToIp().String()),
-		Port: PFCP_PORT,
-	}
+	// The adapter's N4 address, not its Node ID, which may be an FQDN. With one address per
+	// family it is the wildcard, one socket for both.
+	addr := config.AdapterN4.ListenAddr(PFCP_PORT)
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		logger.PfcpLog.Errorf("failed to listen on %s: %v", addr.String(), err)
