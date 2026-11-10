@@ -5,6 +5,7 @@ package pfcp
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/omec-project/upfadapter/config"
 	"github.com/omec-project/upfadapter/logger"
@@ -54,8 +55,8 @@ func ForwardPfcpMsgToUpf(pfcpMessage pfcp_message.Message, upNodeID types.NodeID
 		associationReq.RecoveryTimeStamp = ie.NewRecoveryTimeStamp(config.UpfServerStartTime)
 
 		// replace SMF NodeId with of upf-adapter's one
-		associationReq.NodeID = ie.NewNodeID(config.UpfAdapterIp.String(), "", "")
-		logger.AppLog.Debugf("association request, existing node id replaced by [%v]", config.UpfAdapterIp)
+		associationReq.NodeID = adapterNodeID()
+		logger.AppLog.Debugf("association request, existing node id replaced by [%v]", config.AdapterN4.NodeID.ValueString())
 
 		// store txn in seq:chan map
 		config.InsertUpfPfcpTxn(associationReq.Sequence(), pfcpTxnChan)
@@ -95,18 +96,15 @@ func ForwardPfcpMsgToUpf(pfcpMessage pfcp_message.Message, upNodeID types.NodeID
 			return nil, fmt.Errorf("invalid session establishment request")
 		}
 		// replace SMF NodeId with of upf-adapter's one
-		sessionEstablishmentReq.NodeID = ie.NewNodeID(config.UpfAdapterIp.String(), "", "")
+		sessionEstablishmentReq.NodeID = adapterNodeID()
 
-		// Replace SMF FSEID v4 Addr with UPF Adapter's IP
+		// Replace the SMF's F-SEID addresses with the adapter's, in the slot of each one's
+		// family, so the UPF sends its session reports here.
 		existingCPFSEID, err1 := sessionEstablishmentReq.CPFSEID.FSEID()
 		if err1 != nil {
 			return nil, fmt.Errorf("error getting FSEID from session establishment request")
 		}
-		sessionEstablishmentReq.CPFSEID = ie.NewFSEID(
-			existingCPFSEID.SEID,
-			config.UpfAdapterIp,
-			nil,
-		)
+		sessionEstablishmentReq.CPFSEID = adapterFSEID(existingCPFSEID.SEID)
 		// store txn in seq:chan map
 		config.InsertUpfPfcpTxn(sessionEstablishmentReq.Sequence(), pfcpTxnChan)
 
@@ -196,4 +194,24 @@ func answerRetention(rsp *pfcp_message.AssociationSetupResponse, req pfcp_messag
 	if flags != 0 {
 		rsp.PFCPASRspFlags = ie.NewPFCPASRspFlags(flags)
 	}
+}
+
+// adapterNodeID is the Node ID IE the adapter puts in place of the SMF's: its own Node ID, of
+// whichever type it is. It used to be built as IPv4 from UpfAdapterIp, so an adapter with an
+// IPv6 address sent 0.0.0.0. An adapter with no address at all still sends the IPv4 Node ID
+// 0.0.0.0 it always did.
+func adapterNodeID() *ie.IE {
+	nodeID := config.AdapterN4.NodeID
+	if len(nodeID.NodeIdValue) == 0 {
+		return ie.NewNodeID(net.IP(nil).String(), "", "")
+	}
+	return ie.NewNodeIDHeuristic(nodeID.ValueString())
+}
+
+// adapterFSEID is the CP F-SEID the adapter puts in place of the SMF's: the SMF's SEID with
+// the adapter's address in each family it has one in (TS 29.244 clause 8.2.37 allows both).
+// It used to carry UpfAdapterIp in the IPv4 slot only, which was nil on an IPv6 pod, so the
+// F-SEID named no address and the UPF had nowhere to send its reports.
+func adapterFSEID(seid uint64) *ie.IE {
+	return ie.NewFSEID(seid, config.AdapterN4.IPv4, config.AdapterN4.IPv6)
 }
