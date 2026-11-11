@@ -152,6 +152,38 @@ func HandlePfcpAssociationSetupResponse(msg message.Message) {
 	}
 }
 
+// HandlePfcpHeartbeatRequest answers a heartbeat the user plane sends, with the adapter's own
+// Recovery Time Stamp (TS 29.244 clause 7.4.2.2): to the UPF the adapter is its control-plane peer.
+// The SMF's heartbeats are relayed, but the UPF's were never answered -- the case was commented
+// out, and the request was logged as an unknown message type.
+//
+// The answer is written once, without a response transaction (see udp.WritePfcp). A heartbeat
+// changes nothing, so a retransmitted request is simply answered again, and no transaction table
+// is held for whatever address sent one.
+func HandlePfcpHeartbeatRequest(msg message.Message, remoteAddr *net.UDPAddr) {
+	req, ok := msg.(*message.HeartbeatRequest)
+	if !ok {
+		logger.PfcpLog.Errorln("invalid PFCP Heartbeat Request")
+		return
+	}
+
+	if remoteAddr == nil {
+		logger.PfcpLog.Errorln("heartbeat request with no peer address, cannot answer")
+		return
+	}
+
+	if req.RecoveryTimeStamp != nil {
+		if ts, err := req.RecoveryTimeStamp.RecoveryTimeStamp(); err == nil {
+			logger.PfcpLog.Debugf("pfcp heartbeat request from [%v], recovery timestamp [%v]", remoteAddr, ts)
+		}
+	}
+
+	rsp := message.NewHeartbeatResponse(req.Sequence(), ie.NewRecoveryTimeStamp(config.UpfServerStartTime))
+	if err := udp.WritePfcp(rsp, remoteAddr); err != nil {
+		logger.PfcpLog.Errorf("failed to answer heartbeat request seq[%d] from [%v]: %v", req.Sequence(), remoteAddr, err)
+	}
+}
+
 func HandlePfcpHeartbeatResponse(msg message.Message) {
 	heartbeatResp, ok := msg.(*message.HeartbeatResponse)
 	if !ok {

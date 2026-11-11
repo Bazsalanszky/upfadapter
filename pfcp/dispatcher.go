@@ -17,10 +17,11 @@ func Dispatch(msg message.Message, remoteAddr *net.UDPAddr) {
 	// TODO: Add return status to all handlers
 	msgType := msg.MessageType()
 	switch msgType {
-	/*
-		case pfcp.PFCP_HEARTBEAT_REQUEST:
-			handler.HandlePfcpHeartbeatRequest(msg)
-	*/
+	// The user plane checks the adapter is alive as the adapter checks it (TS 29.244 clause
+	// 6.2.2). Left unanswered, a UPF that sends heartbeats -- Open5GS does from the moment it is
+	// associated -- drops the association after a few, and every session with it.
+	case message.MsgTypeHeartbeatRequest:
+		handler.HandlePfcpHeartbeatRequest(msg, remoteAddr)
 	case message.MsgTypeHeartbeatResponse:
 		handler.HandlePfcpHeartbeatResponse(msg)
 	/*
