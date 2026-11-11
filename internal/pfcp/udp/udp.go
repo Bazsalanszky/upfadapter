@@ -234,6 +234,28 @@ func SendPfcp(msg message.Message, addr *net.UDPAddr, eventData any) error {
 	return nil
 }
 
+// WritePfcp sends msg once, outside the transaction layer: it is not resent, and no transaction is
+// held for the peer. It is for a response that is cheaper to give again than to remember, such as
+// a heartbeat's, whose request changes nothing: a retransmitted request finds no transaction, is
+// taken as new and is answered afresh.
+func WritePfcp(msg message.Message, addr *net.UDPAddr) error {
+	if Server == nil {
+		return fmt.Errorf("PFCP server is not initialized")
+	}
+	if Server.Conn == nil {
+		return fmt.Errorf("PFCP server is not listening")
+	}
+
+	buf := make([]byte, msg.MarshalLen())
+	if err := msg.MarshalTo(buf); err != nil {
+		return err
+	}
+
+	_, err := Server.Conn.WriteToUDP(buf, addr)
+
+	return err
+}
+
 // readPfcpMessage returns the peer address alongside the message. A message the
 // user-plane function originates -- a session report -- has to be answered and
 // relayed, and neither is possible without knowing who sent it.
