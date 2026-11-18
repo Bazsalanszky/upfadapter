@@ -39,7 +39,12 @@ func TestAReAssociationIsAnsweredWithPSREIWhenItAsksForRetention(t *testing.T) {
 		{"does not ask, stored answer with PSREI and UUPSI", bitPSREI | bitUUPSI, false, bitUUPSI},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			upNodeID := *types.NewNodeID("10.42.0.40")
+			// A UPF that still holds the association: it answers the adapter's heartbeat under
+			// the Recovery Time Stamp the stored answer carries.
+			fake := startFakeUpf(t, "127.0.0.40", time.Unix(1_790_000_000, 0))
+			startAdapter(t, fake, 7)
+
+			upNodeID := *types.NewNodeID("127.0.0.40")
 			config.InsertUpfNode(upNodeID)
 			upf := config.GetUpfFromNodeId(&upNodeID)
 			t.Cleanup(func() {
@@ -48,7 +53,7 @@ func TestAReAssociationIsAnsweredWithPSREIWhenItAsksForRetention(t *testing.T) {
 				config.UpfCfg.UpfListLock.Unlock()
 			})
 			ies := []*ie.IE{
-				ie.NewCause(ie.CauseRequestAccepted), ie.NewNodeID("10.42.0.40", "", ""),
+				ie.NewCause(ie.CauseRequestAccepted), ie.NewNodeID("127.0.0.40", "", ""),
 				ie.NewRecoveryTimeStamp(time.Unix(1_790_000_000, 0)),
 			}
 			if tc.stored != 0 {
