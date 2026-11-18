@@ -26,8 +26,10 @@ func ForwardPfcpMsgToUpf(pfcpMessage pfcp_message.Message, upNodeID types.NodeID
 	msgType := pfcpMessage.MessageType()
 	switch msgType {
 	case pfcp_message.MsgTypeAssociationSetupRequest:
-		// if UPF is already associated then send Asso rsp
-		if config.IsUpfAssociated(upNodeID) {
+		// If the UPF still holds the adapter's association, answer from the stored copy of its
+		// answer. Being associated once is not enough: the UPF may have dropped the association,
+		// or restarted, since (see associationStillHeld), and then the request has to reach it.
+		if config.IsUpfAssociated(upNodeID) && associationStillHeld(upNodeID) {
 			logger.AppLog.Debugf("upf[%v] already associated", upNodeID)
 			// form and send Assoc rsp
 			pfcpAssociationRsp, err1 := handler.BuildPfcpAssociationResponse(&upNodeID, pfcpMessage.Sequence())
@@ -159,6 +161,10 @@ func ForwardPfcpMsgToUpf(pfcpMessage pfcp_message.Message, upNodeID types.NodeID
 	// wait for response from UPF
 	pfcpRsp := <-pfcpTxnChan
 
+	if msgType == pfcp_message.MsgTypeHeartbeatRequest && pfcpRsp.Err == nil {
+		noteHeartbeatRecovery(upNodeID, pfcpRsp.Rsp)
+	}
+
 	return pfcpRsp.Rsp, pfcpRsp.Err
 }
 
@@ -174,9 +180,9 @@ const psrei = 0x01
 // Retention Information; if it does and they were retained, the response sets PSREI. Answered here,
 // the request never reaches the UPF and the adapter's own association with it is not replaced, so
 // the UPF keeps the sessions for as long as that association stands, and PSREI is the answer to
-// whether the SMF asked. The adapter does not detect a UPF restart or the loss of its association,
-// and once associated it answers from the stored copy regardless, so in that state this says the
-// sessions were retained when the UPF no longer has them. The stored copy is the UPF's answer to
+// whether the SMF asked. The adapter answers from the stored copy only once the UPF has confirmed
+// that it still holds that association (associationStillHeld), so a UPF that restarted or dropped
+// it gets the request instead, and its own answer says what it kept. The stored copy is the UPF's answer to
 // an earlier request, so its PSREI answered that one and is not passed on; its other flags are the
 // UPF's and are kept.
 func answerRetention(rsp *pfcp_message.AssociationSetupResponse, req pfcp_message.Message) {
